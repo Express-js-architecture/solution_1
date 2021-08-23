@@ -1,0 +1,68 @@
+### Controller의 책임을 최소화하자
+
+보통의 프로젝트나 입문용 강의를 보면 전체적인 아키텍쳐가 **Router <-> Controller <-> Model**로 이루어져있습니다. 이 구조는 단점이있습니다. 프로젝트의 규모가 커지거나, 컨트롤러 내부에서 수행해야될 코드들이 많아지게된다면 컨트롤러의 부피가 커지게되고 나중에 유지보수와 테스트*(추후에 설명)가 어려워집니다. 
+저희는 MVC 패턴을 기반으로, **Router <-> Controller <-> Service <-> Model(Repository)**으로 나누어 어떻게 컨트롤러의 책임을 최소화하고, 격리된 방식으로 사용할 수 있는지 살펴보겠습니다.
+
+### 가상의 설정
+가상의 설정을 해보겠습니다.
+
+- AJAX를 통해 사용자 검색을 제공하는 API를 만듭니다.
+- Socket.io를 통해 위와 동일한 사용자 검색을 제공하는 API를 만듭니다.
+
+손쉽게 Express로 만들어보겠습니다.
+
+route.js
+```
+import * as userControllers from 'controllers/users';
+router.get('/users/:username', userControllers.getUser);
+```
+controllers/user.js
+```
+import User from '../models/User';
+function getUser(req, res, next) {
+  const username = req.params.username;
+  if (username === '') {
+    return res.status(500).json({ error: 'Username can\'t be blank' });
+  }
+  try {
+    const user = await User.find({ username }).exec();
+    return res.status(200).json(user);
+  } catch (error) {
+    return res.status(500).json(error);
+  }
+}
+```
+
+이제 Socket.io 부분을 작성해봅시다.
+```
+import User from '../models/User';
+socket.on('RequestUser', (data, ack) => {
+  const username = data.username;
+  if (username === '') {
+    ack ({ error: 'Username can\'t be blank' });
+  }
+  try {
+    const user = User.find({ username }).exec();
+    return ack(user);
+  } catch (error) {
+    return ack(error);
+  }
+});
+```
+음, 벌써부터 느낌이 좋지않네요. 문제점들을 한번 봅시다.
+
+- if (username === ''). 각 컨트롤러에서 유효성 검사를 **두 번** 작성해야 했습니다. 만약 n개의 컨트롤러에서 같은 유효성 검사가 있다면 어떻게 될까요? 
+- User.find({ username })는 **두 번** 반복됩니다. Service Layer에 더 적합한 로직인것같습니다.
+
+우리는 Express 및 Socket.io에서 정의한대로 두 개의 컨트롤러를 작성했습니다. Express와 Socket.io는 모두 이전 버전과의 호환성을 가지고 있기 때문에 절대 망가지지 않겠지만, **재사용**할 수 없습니다.
+
+뻔하지않지만 또 다른 문제점도 보이네요.
+
+컨트롤러에서의 응답(response)은 수작업입니다. .json({ **error**: whatever })
+
+실무에서의 API는 지속적으로 변경될 수 있습니다. 나중에는 컨트롤러에서의 응답이 { **err**: whatever } 또는, 더 유용한 메시지를 담은 응답이길 원할 것입니다: { error:what, status: 500 }
+
+### 시작해봅시다
+위와같은 문제점들을 해결할 수 있는 솔루션/아키텍쳐들은 이미 많이있습니다. 자신의 상황과 필요에따라 적합한 솔루션을 찾으시면 됩니다.
+실제로 규모가있는 프로젝트에서 꽤나 잘 작동한 하나의 해결책을 소개해드리려고합니다
+**Model -> Service -> Controller -> Router** 순으로 진행하며 끝까지 재미있게 진행해보겠습니다.
